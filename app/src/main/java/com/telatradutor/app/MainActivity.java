@@ -64,7 +64,7 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
 
         TextView description = new TextView(this);
-        description.setText("Versão 0.3.0: teste real de captura da tela. Depois vamos ligar isso ao OCR e tradução.");
+        description.setText("Versão 0.4.0: correção da captura de tela. Depois vamos ligar isso ao OCR e tradução.");
         description.setTextSize(17);
         description.setGravity(Gravity.CENTER);
         description.setPadding(0, 22, 0, 28);
@@ -154,12 +154,23 @@ public class MainActivity extends Activity {
         }
 
         statusText.setText("Status: permissão aceita. Capturando imagem...");
+        cleanupCaptureResources();
         mediaProjection = projectionManager.getMediaProjection(resultCode, data);
+        if (mediaProjection == null) {
+            statusText.setText("Status: não foi possível iniciar a captura.");
+            return;
+        }
+        mediaProjection.registerCallback(new MediaProjection.Callback() {
+            @Override
+            public void onStop() {
+                runOnUiThread(() -> statusText.setText("Status: captura encerrada."));
+            }
+        }, new Handler(getMainLooper()));
         startOneShotCapture();
     }
 
     private void startOneShotCapture() {
-        cleanupCaptureResources();
+        cleanupDisplayResources();
         imageCaptured = false;
 
         DisplayMetrics metrics = getResources().getDisplayMetrics();
@@ -219,6 +230,22 @@ public class MainActivity extends Activity {
         Bitmap croppedBitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, screenWidth, screenHeight);
         paddedBitmap.recycle();
         return croppedBitmap;
+    }
+
+    private void cleanupDisplayResources() {
+        if (virtualDisplay != null) {
+            virtualDisplay.release();
+            virtualDisplay = null;
+        }
+        if (imageReader != null) {
+            imageReader.close();
+            imageReader = null;
+        }
+        if (captureThread != null) {
+            captureThread.quitSafely();
+            captureThread = null;
+            captureHandler = null;
+        }
     }
 
     private void cleanupCaptureResources() {
