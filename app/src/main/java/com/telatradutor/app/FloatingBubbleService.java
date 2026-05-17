@@ -48,11 +48,12 @@ public class FloatingBubbleService extends Service {
         params.x = 80;
         params.y = 200;
 
-        bubble.setOnClickListener(v -> Toast.makeText(
-                this,
-                "Próxima fase: capturar tela e detectar texto.",
-                Toast.LENGTH_SHORT
-        ).show());
+        bubble.setOnClickListener(v -> {
+            Toast.makeText(this, "Abra o TelaTradutor e toque em Testar captura de tela.", Toast.LENGTH_LONG).show();
+            Intent intent = new Intent(this, MainActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        });
 
         bubble.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {

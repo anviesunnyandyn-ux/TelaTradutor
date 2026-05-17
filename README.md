@@ -2,17 +2,14 @@
 
 Aplicativo Android experimental para tradução automática de tela.
 
-## Versão 0.2.0
+## Versão 0.3.0
 
-Esta versão tem:
+Esta versão testa a captura real de tela com MediaProjection.
 
-1. Tela inicial
-2. Permissão de sobreposição
-3. Bolha flutuante
-4. Teste de captura de tela com MediaProjection
+Fases:
 
-Próximas fases:
-
-1. OCR para detectar texto
-2. Tradução automática
-3. Exibição da tradução por cima da tela
+1. Bolha flutuante
+2. Captura de tela
+3. OCR para detectar texto
+4. Tradução automática
+5. Exibição da tradução por cima da tela

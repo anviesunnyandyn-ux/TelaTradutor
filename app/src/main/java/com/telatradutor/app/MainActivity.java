@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -14,10 +13,11 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.Looper;
+import android.os.HandlerThread;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -28,37 +28,46 @@ import android.widget.Toast;
 import java.nio.ByteBuffer;
 
 public class MainActivity extends Activity {
-    private static final int REQUEST_SCREEN_CAPTURE = 5001;
+    private static final int REQUEST_MEDIA_PROJECTION = 2001;
 
+    private TextView statusText;
+    private ImageView previewImage;
     private MediaProjectionManager projectionManager;
     private MediaProjection mediaProjection;
     private VirtualDisplay virtualDisplay;
     private ImageReader imageReader;
-    private ImageView previewImage;
-    private TextView statusText;
+    private HandlerThread captureThread;
+    private Handler captureHandler;
+    private int screenWidth;
+    private int screenHeight;
+    private int screenDensity;
+    private boolean imageCaptured = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        buildLayout();
+    }
 
+    private void buildLayout() {
         ScrollView scrollView = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(40, 40, 40, 40);
+        root.setPadding(36, 48, 36, 48);
         scrollView.addView(root);
 
         TextView title = new TextView(this);
         title.setText("TelaTradutor");
-        title.setTextSize(28);
+        title.setTextSize(30);
         title.setGravity(Gravity.CENTER);
 
         TextView description = new TextView(this);
-        description.setText("Versão 0.2.0: bolha flutuante + teste de captura da tela. Depois vamos ligar isso ao OCR e tradução.");
-        description.setTextSize(16);
+        description.setText("Versão 0.3.0: teste real de captura da tela. Depois vamos ligar isso ao OCR e tradução.");
+        description.setTextSize(17);
         description.setGravity(Gravity.CENTER);
-        description.setPadding(0, 24, 0, 24);
+        description.setPadding(0, 22, 0, 28);
 
         Button permissionButton = new Button(this);
         permissionButton.setText("1. Permitir sobreposição");
@@ -74,22 +83,36 @@ public class MainActivity extends Activity {
 
         statusText = new TextView(this);
         statusText.setText("Status: aguardando teste.");
-        statusText.setTextSize(15);
-        statusText.setPadding(0, 28, 0, 16);
+        statusText.setTextSize(17);
         statusText.setGravity(Gravity.CENTER);
+        statusText.setPadding(0, 28, 0, 18);
 
         previewImage = new ImageView(this);
         previewImage.setAdjustViewBounds(true);
-        previewImage.setMaxHeight(900);
+        previewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        imageParams.setMargins(0, 10, 0, 0);
 
         root.addView(title);
         root.addView(description);
-        root.addView(permissionButton);
-        root.addView(startButton);
-        root.addView(captureButton);
+        root.addView(permissionButton, fullWidthParams());
+        root.addView(startButton, fullWidthParams());
+        root.addView(captureButton, fullWidthParams());
         root.addView(statusText);
-        root.addView(previewImage);
+        root.addView(previewImage, imageParams);
         setContentView(scrollView);
+    }
+
+    private LinearLayout.LayoutParams fullWidthParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        params.setMargins(0, 8, 0, 8);
+        return params;
     }
 
     private void requestOverlayPermission() {
@@ -98,7 +121,7 @@ public class MainActivity extends Activity {
                     Uri.parse("package:" + getPackageName()));
             startActivity(intent);
         } else {
-            Toast.makeText(this, "Permissão de sobreposição já liberada.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Permissão já liberada.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -109,105 +132,96 @@ public class MainActivity extends Activity {
             return;
         }
         startService(new Intent(this, FloatingBubbleService.class));
-        Toast.makeText(this, "Bolha iniciada.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "Bolha iniciada.", Toast.LENGTH_SHORT).show();
     }
 
     private void requestScreenCapture() {
-        if (projectionManager == null) {
-            Toast.makeText(this, "MediaProjection não está disponível neste aparelho.", Toast.LENGTH_LONG).show();
-            return;
-        }
         statusText.setText("Status: pedindo permissão de captura...");
-        startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_SCREEN_CAPTURE);
+        previewImage.setImageDrawable(null);
+        Intent captureIntent = projectionManager.createScreenCaptureIntent();
+        startActivityForResult(captureIntent, REQUEST_MEDIA_PROJECTION);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_SCREEN_CAPTURE) {
-            if (resultCode == RESULT_OK && data != null) {
-                statusText.setText("Status: permissão liberada. Capturando imagem...");
-                startProjection(resultCode, data);
-            } else {
-                statusText.setText("Status: permissão de captura negada.");
-                Toast.makeText(this, "Você negou a captura de tela.", Toast.LENGTH_LONG).show();
-            }
-        }
-    }
+        if (requestCode != REQUEST_MEDIA_PROJECTION) return;
 
-    private void startProjection(int resultCode, Intent data) {
-        stopProjection();
-
-        mediaProjection = projectionManager.getMediaProjection(resultCode, data);
-        if (mediaProjection == null) {
-            statusText.setText("Status: erro ao iniciar captura.");
+        if (resultCode != RESULT_OK || data == null) {
+            statusText.setText("Status: permissão de captura negada.");
+            Toast.makeText(this, "Captura cancelada.", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        mediaProjection.registerCallback(new MediaProjection.Callback() {
-            @Override
-            public void onStop() {
-                runOnUiThread(() -> statusText.setText("Status: captura finalizada."));
-            }
-        }, new Handler(Looper.getMainLooper()));
+        statusText.setText("Status: permissão aceita. Capturando imagem...");
+        mediaProjection = projectionManager.getMediaProjection(resultCode, data);
+        startOneShotCapture();
+    }
+
+    private void startOneShotCapture() {
+        cleanupCaptureResources();
+        imageCaptured = false;
 
         DisplayMetrics metrics = getResources().getDisplayMetrics();
-        int width = metrics.widthPixels;
-        int height = metrics.heightPixels;
-        int density = metrics.densityDpi;
+        screenWidth = metrics.widthPixels;
+        screenHeight = metrics.heightPixels;
+        screenDensity = metrics.densityDpi;
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        captureThread = new HandlerThread("TelaTradutorCaptureThread");
+        captureThread.start();
+        captureHandler = new Handler(captureThread.getLooper());
+
+        imageReader = ImageReader.newInstance(screenWidth, screenHeight, android.graphics.PixelFormat.RGBA_8888, 2);
+        imageReader.setOnImageAvailableListener(reader -> {
+            if (imageCaptured) return;
+            imageCaptured = true;
+            Image image = null;
+            try {
+                image = reader.acquireLatestImage();
+                if (image == null) return;
+                Bitmap bitmap = imageToBitmap(image);
+                runOnUiThread(() -> {
+                    previewImage.setImageBitmap(bitmap);
+                    statusText.setText("Status: captura funcionou! A imagem apareceu abaixo.");
+                    Toast.makeText(this, "Captura funcionou.", Toast.LENGTH_SHORT).show();
+                });
+            } catch (Exception e) {
+                String message = e.getMessage() == null ? e.toString() : e.getMessage();
+                runOnUiThread(() -> statusText.setText("Status: erro na captura: " + message));
+            } finally {
+                if (image != null) image.close();
+                runOnUiThread(() -> new Handler().postDelayed(this::cleanupCaptureResources, 700));
+            }
+        }, captureHandler);
+
         virtualDisplay = mediaProjection.createVirtualDisplay(
-                "TelaTradutorCapture",
-                width,
-                height,
-                density,
+                "TelaTradutorOneShot",
+                screenWidth,
+                screenHeight,
+                screenDensity,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader.getSurface(),
                 null,
-                null
+                captureHandler
         );
-
-        new Handler(Looper.getMainLooper()).postDelayed(this::captureOneFrame, 900);
     }
 
-    private void captureOneFrame() {
-        if (imageReader == null) return;
+    private Bitmap imageToBitmap(Image image) {
+        Image.Plane[] planes = image.getPlanes();
+        ByteBuffer buffer = planes[0].getBuffer();
+        int pixelStride = planes[0].getPixelStride();
+        int rowStride = planes[0].getRowStride();
+        int rowPadding = rowStride - pixelStride * screenWidth;
+        int bitmapWidth = screenWidth + rowPadding / pixelStride;
 
-        Image image = null;
-        try {
-            image = imageReader.acquireLatestImage();
-            if (image == null) {
-                statusText.setText("Status: não consegui capturar a imagem. Tente de novo.");
-                return;
-            }
-
-            Image.Plane[] planes = image.getPlanes();
-            ByteBuffer buffer = planes[0].getBuffer();
-            int pixelStride = planes[0].getPixelStride();
-            int rowStride = planes[0].getRowStride();
-            int rowPadding = rowStride - pixelStride * image.getWidth();
-
-            Bitmap bitmap = Bitmap.createBitmap(
-                    image.getWidth() + rowPadding / pixelStride,
-                    image.getHeight(),
-                    Bitmap.Config.ARGB_8888
-            );
-            bitmap.copyPixelsFromBuffer(buffer);
-
-            Bitmap cropped = Bitmap.createBitmap(bitmap, 0, 0, image.getWidth(), image.getHeight());
-            previewImage.setImageBitmap(cropped);
-            statusText.setText("Status: captura feita com sucesso. Próxima fase: OCR.");
-            Toast.makeText(this, "Captura feita!", Toast.LENGTH_SHORT).show();
-        } catch (Exception e) {
-            statusText.setText("Status: erro na captura: " + e.getMessage());
-        } finally {
-            if (image != null) image.close();
-            stopProjection();
-        }
+        Bitmap paddedBitmap = Bitmap.createBitmap(bitmapWidth, screenHeight, Bitmap.Config.ARGB_8888);
+        paddedBitmap.copyPixelsFromBuffer(buffer);
+        Bitmap croppedBitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, screenWidth, screenHeight);
+        paddedBitmap.recycle();
+        return croppedBitmap;
     }
 
-    private void stopProjection() {
+    private void cleanupCaptureResources() {
         if (virtualDisplay != null) {
             virtualDisplay.release();
             virtualDisplay = null;
@@ -220,11 +234,16 @@ public class MainActivity extends Activity {
             mediaProjection.stop();
             mediaProjection = null;
         }
+        if (captureThread != null) {
+            captureThread.quitSafely();
+            captureThread = null;
+            captureHandler = null;
+        }
     }
 
     @Override
     protected void onDestroy() {
-        stopProjection();
+        cleanupCaptureResources();
         super.onDestroy();
     }
 }
